@@ -515,6 +515,56 @@
   .ptr.spin i{display:block;animation:ptrspin .8s linear infinite;font-style:normal}
   @keyframes ptrspin{to{transform:rotate(360deg)}}
 
+  /* ---------- 建立線上攤位後的代碼提示 ---------- */
+  .code-splash{
+    position:fixed;inset:0;z-index:130;background:var(--surface);
+    display:flex;align-items:center;justify-content:center;padding:24px;
+    transition:opacity .2s;animation:tin2 .18s ease
+  }
+  .code-splash__t{font-size:15px;font-weight:700;color:var(--muted);text-align:center}
+  .code-splash__code{
+    font-family:var(--ff-mono);font-size:clamp(46px,22vw,86px);font-weight:700;letter-spacing:.18em;
+    color:var(--accent-ink);text-align:center;margin:14px 0 10px;padding-left:.18em
+  }
+  .code-splash__h{font-size:13px;color:var(--muted);text-align:center}
+
+  /* ---------- 收銀頁計算機 ---------- */
+  .calc-wrap{
+    position:fixed;right:0;bottom:calc(26px + env(safe-area-inset-bottom));z-index:55;display:flex;align-items:flex-start;
+    transform:translateX(calc(100% - 36px));
+    transition:transform .3s cubic-bezier(.22,.61,.36,1)
+  }
+  .calc-wrap.open{transform:translateX(0)}
+  .calc-handle{
+    width:36px;min-height:96px;align-self:center;border:0;cursor:pointer;padding:0;
+    background:var(--surface);color:var(--muted);font-size:19px;
+    border-radius:12px 0 0 12px;box-shadow:-3px 2px 14px -4px rgba(0,0,0,.35);
+    display:flex;align-items:center;justify-content:center
+  }
+  .calc-wrap.open .calc-handle{box-shadow:none;background:transparent}
+  .calc-body{
+    width:250px;background:var(--surface);border-radius:14px 0 0 14px;padding:12px;
+    box-shadow:-6px 4px 22px -6px rgba(0,0,0,.4);border:1px solid var(--line);border-right:0
+  }
+  .calc-disp{
+    background:var(--surface-2);border:1px solid var(--line);border-radius:10px;
+    padding:10px 12px;margin-bottom:10px;text-align:right;min-height:56px;
+    display:flex;flex-direction:column;justify-content:center
+  }
+  .calc-disp__prev{font-family:var(--ff-mono);font-size:11.5px;color:var(--faint);min-height:14px}
+  .calc-disp__cur{font-family:var(--ff-mono);font-size:26px;font-weight:700;line-height:1.1;word-break:break-all}
+  .calc-keys{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+  .calc-key{
+    border:0;border-radius:10px;background:var(--surface-2);color:var(--ink);cursor:pointer;
+    font-size:18px;font-weight:600;height:44px;font-family:var(--ff-mono);
+    display:flex;align-items:center;justify-content:center;user-select:none;-webkit-user-select:none
+  }
+  .calc-key:active{transform:translateY(1px);filter:brightness(.94)}
+  .calc-key.op{background:var(--accent-weak);color:var(--accent-ink)}
+  .calc-key.fn{background:var(--line);color:var(--muted);font-size:15px}
+  .calc-key.eq{background:var(--accent);color:var(--accent-on)}
+  .calc-key.w2{grid-column:span 2}
+
   .order.pending{opacity:.72}
   .tag-mini{font-size:10px;font-weight:700;padding:2px 6px;border-radius:999px;background:var(--surface-2);color:var(--muted)}
   .tag-mini.warn{background:var(--warn-weak);color:var(--warn)}
@@ -1174,7 +1224,14 @@ function initPullToRefresh(){
 
 /* ============================================================ RENDER ============================================================ */
 const app=$('#app');
-function render(){ UI.screen==='home' ? renderHome() : renderStall(); }
+/* 進攤位預設停在收銀頁；還沒有商品的話才先去商品頁 */
+const defaultTabFor = s => (s && s.products && s.products.length) ? 'checkout' : 'products';
+/* 計算機只在「確認收款」頁出現；掛在 body 所以重繪不會重置它 */
+function syncCalc(){ ensureCalc(UI.screen==='stall' && UI.tab==='checkout' && UI.stage==='confirm'); }
+function render(){
+  UI.screen==='home' ? renderHome() : renderStall();
+  syncCalc();
+}
 
 const reduceMotion = ()=>window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)').matches;
 const ANIMS=['anim-in-right','anim-out-right','anim-in-left','anim-up'];
@@ -1198,6 +1255,91 @@ function goBack(mutate){
   setTimeout(finish,420);
   app.classList.add('anim-out-right');
 }
+/* 建立線上攤位後，用整頁白底大字顯示代碼，至少停留 1 秒 */
+function showCodeSplash(code){
+  const ov=document.createElement('div');
+  ov.className='code-splash';
+  ov.innerHTML=`<div>
+    <div class="code-splash__t">線上攤位已建立</div>
+    <div class="code-splash__code">${esc(code)}</div>
+    <div class="code-splash__h">其他裝置輸入這組代碼即可加入共用</div>
+  </div>`;
+  document.body.appendChild(ov);
+  let closable=false;
+  const close=()=>{ if(!closable) return; ov.style.opacity='0'; setTimeout(()=>ov.remove(),220); };
+  setTimeout(()=>{ closable=true; ov.addEventListener('click',close); },1000);   // 前 1 秒不可關
+  setTimeout(()=>{ closable=true; close(); },3200);
+}
+
+/* ---------- 收銀頁的簡易計算機（右側滑入／滑出） ---------- */
+let calcEl=null, calcCur='0', calcAcc=null, calcOp=null, calcFresh=true;
+const buzz = ()=>{ try{ if(navigator.vibrate) navigator.vibrate(9); }catch(_){} };
+function calcCompute(a,b,op){
+  if(op==='+') return a+b;
+  if(op==='-') return a-b;
+  if(op==='×') return a*b;
+  if(op==='÷') return b===0?NaN:a/b;
+  return b;
+}
+function calcFmt(n){
+  if(!isFinite(n)) return '錯誤';
+  return String(Math.round(n*1e8)/1e8);
+}
+function calcDraw(){
+  if(!calcEl) return;
+  calcEl.querySelector('.calc-disp__cur').textContent=calcCur;
+  calcEl.querySelector('.calc-disp__prev').textContent=(calcAcc!==null&&calcOp)?`${calcFmt(calcAcc)} ${calcOp}`:'';
+}
+function calcPress(k){
+  buzz();
+  if(k==='AC'){ calcCur='0'; calcAcc=null; calcOp=null; calcFresh=true; }
+  else if(k==='⌫'){ if(!calcFresh){ calcCur=calcCur.slice(0,-1)||'0'; if(calcCur==='-') calcCur='0'; } }
+  else if(k==='.'){ if(calcFresh){ calcCur='0.'; calcFresh=false; } else if(calcCur.indexOf('.')<0) calcCur+='.'; }
+  else if('0123456789'.indexOf(k)>=0){
+    if(calcFresh){ calcCur=k; calcFresh=false; }
+    else if(calcCur.length<14) calcCur=(calcCur==='0'?k:calcCur+k);
+  }
+  else if(k==='='){
+    if(calcOp!==null&&calcAcc!==null){ calcCur=calcFmt(calcCompute(calcAcc,parseFloat(calcCur)||0,calcOp)); calcAcc=null; calcOp=null; }
+    calcFresh=true;
+  }
+  else{ /* + - × ÷ */
+    if(calcOp!==null&&calcAcc!==null&&!calcFresh){ calcCur=calcFmt(calcCompute(calcAcc,parseFloat(calcCur)||0,calcOp)); }
+    calcAcc=parseFloat(calcCur)||0; calcOp=k; calcFresh=true;
+  }
+  calcDraw();
+}
+const CALC_KEYS=[
+  ['AC','fn w2'],['⌫','fn'],['÷','op'],
+  ['7',''],['8',''],['9',''],['×','op'],
+  ['4',''],['5',''],['6',''],['-','op'],
+  ['1',''],['2',''],['3',''],['+','op'],
+  ['0','w2'],['.',''],['=','eq']
+];
+function ensureCalc(show){
+  if(!show){ if(calcEl){ calcEl.remove(); calcEl=null; } return; }
+  if(calcEl) return;                      // 已經在畫面上就別重建，狀態與展開與否才不會被洗掉
+  calcEl=document.createElement('div');
+  calcEl.className='calc-wrap';
+  calcEl.innerHTML=`
+    <button class="calc-handle" aria-label="計算機">❮</button>
+    <div class="calc-body">
+      <div class="calc-disp"><div class="calc-disp__prev"></div><div class="calc-disp__cur">0</div></div>
+      <div class="calc-keys">
+        ${CALC_KEYS.map(([k,c])=>`<button class="calc-key ${c}" data-k="${esc(k)}">${k==='-'?'−':esc(k)}</button>`).join('')}
+      </div>
+    </div>`;
+  document.body.appendChild(calcEl);
+  const handle=calcEl.querySelector('.calc-handle');
+  handle.onclick=()=>{
+    buzz();
+    calcEl.classList.toggle('open');
+    handle.textContent=calcEl.classList.contains('open')?'❯':'❮';
+  };
+  calcEl.querySelectorAll('[data-k]').forEach(b=>{ b.onclick=()=>calcPress(b.dataset.k); });
+  calcDraw();
+}
+
 function bigCheck(){
   const ov=document.createElement('div');
   ov.className='bigcheck';
@@ -1381,6 +1523,7 @@ function renderProducts(st,body){
 
 /* ---------------- CHECKOUT ---------------- */
 function renderCheckout(st,body){
+  syncCalc();
   if(!st.products.length){ body.innerHTML=`<div class="empty"><h3>尚無商品可結帳</h3>請先到「商品」頁新增品項。</div>`; return; }
   if(UI.stage==='confirm'){ renderConfirm(st,body); return; }
 
@@ -1683,7 +1826,7 @@ app.addEventListener('click',async e=>{
   }
   if(act==='open-stall'){
     if(lpFired){ lpFired=false; return; }   // this click is the tail end of a long-press, not a tap
-    goForward(()=>{ UI.stallId=id;UI.screen='stall';UI.tab='products';UI.cart=[];UI.stage='catalog';UI.free=false;UI.openOrders={};UI.dateFilter=''; });
+    goForward(()=>{ UI.stallId=id;UI.screen='stall';UI.tab=defaultTabFor(DB.stalls.find(x=>x.id===id));UI.cart=[];UI.stage='catalog';UI.free=false;UI.openOrders={};UI.dateFilter=''; });
     const s=stall();
     if(isOnlineStall(s)){ startSync(); pullNow(s,{rerender:true}); }
     return;
@@ -1913,7 +2056,7 @@ function openStallModal(existing){
 
   const err=m=>{ const er=$('#serr',modal); er.textContent=m; er.classList.add('show'); };
   const busy=on=>{ const b=$('#ssave',modal); if(b){ b.disabled=on; b.textContent=on?'處理中…':(existing?'儲存':'建立'); } };
-  const enterStall=id=>goForward(()=>{ UI.stallId=id;UI.screen='stall';UI.tab='products';UI.cart=[];UI.stage='catalog';UI.free=false;UI.openOrders={};UI.dateFilter=''; });
+  const enterStall=id=>goForward(()=>{ UI.stallId=id;UI.screen='stall';UI.tab=defaultTabFor(DB.stalls.find(x=>x.id===id));UI.cart=[];UI.stage='catalog';UI.free=false;UI.openOrders={};UI.dateFilter=''; });
 
   $('#ssave',modal).onclick=async()=>{
     /* --- 加入既有線上攤位 --- */
@@ -1960,7 +2103,7 @@ function openStallModal(existing){
       }catch(e2){ busy(false); return err(apiErrText(e2)); }
     }
     DB.stalls.push(st); save(); closeModal(); enterStall(st.id);
-    if(isOnlineStall(st)){ startSync(); toast(`線上攤位已建立，代碼：${st.code}`); }
+    if(isOnlineStall(st)){ startSync(); showCodeSplash(st.code); }
   };
 }
 
