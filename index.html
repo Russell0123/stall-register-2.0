@@ -196,6 +196,9 @@
   .tab--primary{color:var(--accent-ink);background:var(--accent-weak);border-radius:9px 9px 0 0}
   .tab--primary[aria-selected="true"]{background:var(--accent);color:var(--accent-on)}
   .stall__body{flex:1;padding:18px 14px 40px}
+  /* 收銀頁：內容不夠長時，底部總金額列仍要貼齊畫面最下方 */
+  .stall__body--flex{display:flex;flex-direction:column}
+  .stall__body--flex .checkout-foot{margin-top:auto}
 
   .section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:24px 0 12px}
   .section-head:first-child{margin-top:0}
@@ -1463,7 +1466,7 @@ function renderStall(){
         ${tabs.map(([k,l])=>`<button class="tab ${k==='checkout'?'tab--primary':''}" role="tab" aria-selected="${UI.tab===k}" data-act="tab" data-id="${k}">${l}</button>`).join('')}
       </div>
     </div>
-    <div class="stall__body" id="body"></div>
+    <div class="stall__body ${UI.tab==='checkout'?'stall__body--flex':''}" id="body"></div>
     ${isOnlineStall(st)&&(pendingCount(st)||st.syncErr)?
       `<button class="sync-float ${st.syncErr&&!pendingCount(st)?'err':''}" data-act="sync-now">
         ${pendingCount(st)?`⏳ ${pendingCount(st)} 筆待同步`:'⚠ 同步失敗'} · 點此重試</button>`:''}
