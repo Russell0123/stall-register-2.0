@@ -1,7 +1,7 @@
 /* 攤位收銀台 — service worker
    離線可用：第一次連網開啟後，之後沒網路也能用。
    改了 index.html 之後，把下面的版本號 +1（例如 v1 -> v2），使用者下次開啟就會更新。 */
-const VERSION = 'stall-register-v10';
+const VERSION = 'stall-register-v11';
 const CORE = './';                 // 相對於 sw.js 所在資料夾
 const APP_SHELL = [
   './',
@@ -34,6 +34,18 @@ self.addEventListener('fetch', (e) => {
   if (req.mode === 'navigate') {
     e.respondWith(
       caches.match('./index.html').then((cached) => cached || fetch(req).catch(() => caches.match('./index.html')))
+    );
+    return;
+  }
+
+  // 後端網址設定檔：一律以網路上的為準（改了網址才會馬上生效），連不上才用快取
+  if (url.pathname.indexOf('backend-url.txt') >= 0) {
+    e.respondWith(
+      fetch(req).then((res) => {
+        const copy = res.clone();
+        caches.open(VERSION).then((c) => c.put(req, copy));
+        return res;
+      }).catch(() => caches.match(req))
     );
     return;
   }

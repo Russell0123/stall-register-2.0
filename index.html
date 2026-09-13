@@ -46,7 +46,7 @@
   img{max-width:100%}
   [hidden]{display:none!important}
   html,body{height:100%}
-  html{background:var(--bg);overflow-x:clip}
+  html{background:var(--bg);overflow-x:clip;overscroll-behavior-y:contain}   /* 關掉瀏覽器原生下拉刷新，改用自己的 */
   body{
     margin:0;background:var(--bg);color:var(--ink);
     font-family:var(--ff-sans);font-size:15px;line-height:1.5;
@@ -103,11 +103,12 @@
     background:linear-gradient(to bottom, rgba(245,245,240,0) 0%, var(--bg) 92%)
   }
   .home-banner__pal{
-    position:absolute;top:calc(env(safe-area-inset-top) + 12px);right:14px;
-    width:42px;height:42px;border-radius:12px;border:0;cursor:pointer;z-index:3;
-    background:rgba(255,255,255,.92);color:#1e2126;font-size:20px;display:flex;align-items:center;justify-content:center;
-    box-shadow:0 2px 10px rgba(0,0,0,.3)
+    position:absolute;top:calc(env(safe-area-inset-top) + 10px);right:10px;
+    width:44px;height:44px;border:0;cursor:pointer;z-index:3;padding:0;
+    background:transparent;display:flex;align-items:center;justify-content:center;
+    filter:drop-shadow(0 1px 3px rgba(0,0,0,.75))
   }
+  .home-banner__pal svg{width:26px;height:26px;fill:#fff;display:block}
   .home-title{
     align-self:center;text-align:center;position:relative;z-index:3;
     margin:calc(env(safe-area-inset-top) + 54px) auto 0;
@@ -149,6 +150,8 @@
     border:1px solid var(--line);background:var(--surface-2);cursor:pointer;
     display:flex;flex-direction:column;justify-content:flex-end;box-shadow:var(--shadow);
     text-align:left;padding:0;font:inherit;color:inherit;
+    /* 長按時不要跑出系統的選取／複製選單 */
+    user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
   }
   .tile__img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
   .tile__ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:34px;color:var(--faint)}
@@ -475,15 +478,47 @@
   .action-item--danger:hover{background:var(--danger-weak)}
 
   /* ---------- 線上模式 ---------- */
-  .mode-pick{display:flex;flex-direction:column;gap:8px}
+  .mode-pick{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr);gap:7px}
   .mode-opt{
-    text-align:left;padding:12px 13px;border:1.5px solid var(--line-strong);border-radius:11px;
-    background:var(--surface);cursor:pointer;font:inherit;color:inherit
+    display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:5px;
+    text-align:center;padding:11px 6px;border:1.5px solid var(--line-strong);border-radius:11px;
+    background:var(--surface);cursor:pointer;font:inherit;color:inherit;min-height:78px
   }
-  .mode-opt b{display:block;font-size:14px}
-  .mode-opt small{display:block;color:var(--muted);font-size:11.5px;margin-top:2px}
+  .mode-opt i{font-size:21px;line-height:1;font-style:normal}
+  .mode-opt b{font-size:12.5px;font-weight:700;line-height:1.25}
   .mode-opt.on{border-color:var(--accent);background:var(--accent-weak)}
   .mode-opt.on b{color:var(--accent-ink)}
+  .mode-desc{
+    margin-top:9px;padding:10px 12px;border-radius:10px;background:var(--surface-2);
+    border:1px solid var(--line);font-size:12.5px;color:var(--muted);line-height:1.55;
+    min-height:61px   /* 固定兩行高，切換模式時不會跳動 */
+  }
+  /* 建立新攤位的表單高度固定，避免切換模式時整個視窗忽高忽低 */
+  .create-fixed{min-height:436px}
+
+  /* 待同步／同步失敗的小浮動提示 */
+  .sync-float{
+    position:fixed;left:14px;bottom:calc(16px + env(safe-area-inset-bottom));z-index:60;
+    display:inline-flex;align-items:center;gap:7px;padding:8px 13px;border-radius:999px;
+    background:var(--warn);color:#fff;font-size:12.5px;font-weight:700;cursor:pointer;
+    box-shadow:0 6px 18px -6px rgba(0,0,0,.45);border:0
+  }
+  .sync-float.err{background:var(--danger)}
+
+  /* 下拉重新同步 */
+  .ptr{
+    position:fixed;left:50%;top:0;z-index:70;transform:translate(-50%,-46px);
+    width:38px;height:38px;border-radius:50%;background:var(--surface);
+    box-shadow:0 4px 14px -4px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;
+    font-size:17px;color:var(--accent-ink);pointer-events:none
+  }
+  .ptr.spin i{display:block;animation:ptrspin .8s linear infinite;font-style:normal}
+  @keyframes ptrspin{to{transform:rotate(360deg)}}
+
+  .order.pending{opacity:.72}
+  .tag-mini{font-size:10px;font-weight:700;padding:2px 6px;border-radius:999px;background:var(--surface-2);color:var(--muted)}
+  .tag-mini.warn{background:var(--warn-weak);color:var(--warn)}
+  .tag-mini.bad{background:var(--danger-weak);color:var(--danger)}
   .online-box{border:1px solid var(--line-strong);border-radius:11px;padding:12px 13px;background:var(--surface-2)}
   .code-badge{
     font-family:var(--ff-mono);font-size:20px;font-weight:700;letter-spacing:.22em;
@@ -907,6 +942,8 @@ function duplicateStall(s){
   copy.vendDate=s.vendDate||fmtDate(s.createdAt);   // 沿用原攤位的擺攤日期
   copy.mode='offline';                     // 副本一律是獨立的離線攤位，不會連到原本的雲端攤位
   delete copy.code; delete copy.catalogRev; delete copy.lastSync;
+  delete copy.pending; delete copy.conflicts; delete copy.syncErr;
+  (copy.orders||[]).forEach(o=>{ delete o.pending; });
   return copy;
 }
 
@@ -973,21 +1010,69 @@ function applyState(st,state){
   st.syncErr='';
 }
 
+/* 伺服器狀態為準，但本機這兩種訂單要再疊回去，否則會被洗掉：
+   1) 還沒送出去的（pending）—— 疊回並扣庫存
+   2) 已收款但伺服器判定庫存不足的（conflicts）—— 只保留紀錄與收入，不動庫存 */
+function applyServerSnapshot(st,state){
+  applyState(st,state);
+  const have={}; st.orders.forEach(o=>{ have[o.id]=1; });
+  st.conflicts=(st.conflicts||[]).filter(o=>!have[o.id]);
+  st.conflicts.forEach(o=>{ st.orders.push(o); });
+  st.pending=(st.pending||[]).filter(j=>!have[j.order.id]);
+  st.pending.forEach(j=>{ j.order.pending=true; applyOrderLocal(st,j.order); });
+  st.income=st.orders.reduce((a,o)=>a+(o.free?0:(Number(o.total)||0)),0);
+  st.orders.sort((a,b)=>a.time-b.time);
+}
+const pendingCount = s => (s&&s.pending?s.pending.length:0);
+/* 本機專用的標記不要送上雲端，否則會跟著訂單存回來 */
+function cleanOrder(o){ const c=Object.assign({},o); delete c.pending; delete c.conflict; return c; }
+
+/* 一次同步循環：先把待同步的訂單補送出去，再拉最新資料 */
 async function pullNow(st,opts){
   opts=opts||{};
   if(!isOnlineStall(st)||syncBusy) return false;
   syncBusy=true;
+  let conflicts=[];
   try{
+    /* 1) 補送離線期間累積的訂單 */
+    while(pendingCount(st)){
+      const job=st.pending[0];
+      let d;
+      try{ d=await api('checkout',{code:st.code,order:cleanOrder(job.order),need:job.need},20000); }
+      catch(err){ st.syncErr=apiErrText(err); save(); if(opts.rerender) render(); if(opts.loud) toast('同步失敗：'+st.syncErr); return false; }
+      if(d.ok){
+        st.pending.shift();
+        applyServerSnapshot(st,d.state);
+      }else if(d.error==='OUT_OF_STOCK'){
+        /* 貨已經交出去了，不能把訂單抹掉 —— 保留紀錄並標記成超賣讓人工處理 */
+        const bad=st.pending.shift().order;
+        bad.pending=false; bad.conflict=d.message||'庫存不足';
+        st.conflicts=st.conflicts||[]; st.conflicts.push(bad);
+        conflicts.push(`${fmtTime(bad.time)}：${d.message||'庫存不足'}`);
+        if(d.state) applyServerSnapshot(st,d.state);
+      }else{
+        st.syncErr=d.message||d.error||'同步失敗'; save();
+        if(opts.rerender) render();
+        return false;
+      }
+    }
+    /* 2) 拉最新庫存／訂單 */
     const d=await api('pull',{code:st.code,have:st.catalogRev||''});
     if(!d.ok) throw new Error(d.message||d.error||'同步失敗');
     if(d.catalog) applyCatalog(st,d.catalog);
-    applyState(st,d.state); save();
+    applyServerSnapshot(st,d.state);
+    st.syncErr=''; save();
     if(opts.rerender) render();
+    if(conflicts.length){
+      alertDialog('有訂單與雲端庫存衝突',
+        '下列已收款的訂單，送到伺服器時庫存已經不足（其他裝置先賣掉了）：\n\n'+conflicts.join('\n')+
+        '\n\n這些訂單仍保留在紀錄中並標示為「超賣」，雲端庫存不會再扣，請自行處理出貨。');
+    }
     return true;
   }catch(err){
     st.syncErr=apiErrText(err); save();
-    if(opts.loud) toast('同步失敗：'+st.syncErr);
     if(opts.rerender) render();
+    if(opts.loud) toast('同步失敗：'+st.syncErr);
     return false;
   }finally{ syncBusy=false; }
 }
@@ -1020,7 +1105,7 @@ function startSync(){
     if(document.querySelector('.pop-dim,.fs-page')) return;
     if(UI.tab==='checkout'&&UI.stage==='confirm') return;     // 確認收款頁面不打斷
     pullNow(s,{rerender:true});
-  },60000);
+  },20000);
 }
 function stopSync(){ if(syncTimer){ clearInterval(syncTimer); syncTimer=null; } }
 
@@ -1028,6 +1113,9 @@ function stopSync(){ if(syncTimer){ clearInterval(syncTimer); syncTimer=null; } 
 function convertToOffline(st){
   st.mode='offline';
   delete st.code; delete st.catalogRev; delete st.syncErr;
+  /* 待同步的訂單早就已經記在本機了，轉離線後不用再送，清掉佇列與標記 */
+  st.orders.forEach(o=>{ delete o.pending; });
+  delete st.pending; delete st.conflicts;
   st.convertedOfflineAt=Date.now();
   stopSync(); save(); render();
 }
@@ -1040,12 +1128,48 @@ async function askConvertOffline(st){
   toast('已轉為離線模式');
   return true;
 }
-/* 線上攤位在沒有網路時擋下結帳，並提供就地切換離線 */
-async function offlineBlockDialog(st){
-  const go=await confirmDialog(
-    '目前連不上網路，線上攤位無法結帳（避免和其他裝置賣重複）。\n\n可以等網路恢復後再送一次，或把這個攤位永久轉為離線模式後改用本機庫存收銀。',
-    '轉為離線模式','danger');
-  if(go) await askConvertOffline(st);
+/* ---------- 下拉重新同步（取代瀏覽器原生的下拉刷新） ---------- */
+let ptrEl=null, ptrStartY=0, ptrDist=0, ptrOn=false;
+function ptrNode(){
+  if(!ptrEl){ ptrEl=document.createElement('div'); ptrEl.className='ptr'; ptrEl.innerHTML='<i>↓</i>'; document.body.appendChild(ptrEl); }
+  return ptrEl;
+}
+function ptrMove(d){
+  const el=ptrNode();
+  el.classList.remove('spin');
+  el.querySelector('i').textContent = d>60?'↻':'↓';
+  el.style.transform=`translate(-50%,${Math.min(d,100)-46}px)`;
+}
+function ptrHide(){ if(ptrEl){ ptrEl.classList.remove('spin'); ptrEl.style.transform='translate(-50%,-46px)'; } }
+function ptrSpin(){ const el=ptrNode(); el.classList.add('spin'); el.querySelector('i').textContent='↻'; el.style.transform='translate(-50%,18px)'; }
+function initPullToRefresh(){
+  document.addEventListener('touchstart',e=>{
+    ptrOn=false; ptrDist=0;
+    if(e.touches.length!==1) return;
+    if(window.scrollY>3) return;
+    if(modal.open||document.querySelector('.pop-dim,.fs-page')) return;
+    if(!isOnlineStall(stall())) return;
+    ptrStartY=e.touches[0].clientY; ptrOn=true;
+  },{passive:true});
+  document.addEventListener('touchmove',e=>{
+    if(!ptrOn) return;
+    const dy=e.touches[0].clientY-ptrStartY;
+    if(dy<=0||window.scrollY>3){ ptrOn=false; ptrDist=0; ptrHide(); return; }
+    ptrDist=dy;
+    if(dy>8) e.preventDefault();          // 吃掉這個手勢，避免跟頁面捲動打架
+    ptrMove(dy);
+  },{passive:false});
+  const end=()=>{
+    if(!ptrOn) return;
+    const d=ptrDist; ptrOn=false; ptrDist=0;
+    if(d>60){
+      const s=stall();
+      if(isOnlineStall(s)){ ptrSpin(); pullNow(s,{rerender:true,loud:true}).then(()=>setTimeout(ptrHide,250)); return; }
+    }
+    ptrHide();
+  };
+  document.addEventListener('touchend',end);
+  document.addEventListener('touchcancel',end);
 }
 
 /* ============================================================ RENDER ============================================================ */
@@ -1085,9 +1209,12 @@ function bigCheck(){
 /* ---------- long-press on a home stall tile: opens the 編輯/複製/刪除 menu ---------- */
 let lpTimer=null, lpFired=false, lpStartXY=null;
 function lpClear(){ if(lpTimer){ clearTimeout(lpTimer); lpTimer=null; } }
+/* 長按攤位時擋掉系統的「選取文字／複製」選單 */
+app.addEventListener('contextmenu',e=>{ if(e.target.closest('[data-act="open-stall"]')) e.preventDefault(); });
 app.addEventListener('pointerdown',e=>{
   const tile=e.target.closest('[data-act="open-stall"]'); if(!tile) return;
   lpFired=false; lpStartXY=[e.clientX,e.clientY];
+  try{ if(window.getSelection) window.getSelection().removeAllRanges(); }catch(_){}
   lpClear();
   const sid=tile.dataset.id;
   lpTimer=setTimeout(()=>{
@@ -1151,13 +1278,15 @@ function renderHome(){
   app.innerHTML=`<div class="home">
     <div class="home-banner" data-act="edit-banner">
       ${banner?`<img class="home-banner__img" src="${banner}" alt="">`:''}
-      <button class="home-banner__pal" data-act="settings" aria-label="佈景與主題色">🎨</button>
+      <button class="home-banner__pal" data-act="settings" aria-label="設定">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.14 12.94a7.4 7.4 0 0 0 .06-.94 7.4 7.4 0 0 0-.06-.94l2.03-1.58a.49.49 0 0 0 .12-.62l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.03 7.03 0 0 0-1.62-.94l-.36-2.54a.48.48 0 0 0-.48-.4h-3.84a.48.48 0 0 0-.48.4l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96a.48.48 0 0 0-.59.22L2.73 8.86a.48.48 0 0 0 .12.62l2.03 1.58a7.6 7.6 0 0 0 0 1.88l-2.03 1.58a.49.49 0 0 0-.12.62l1.92 3.32c.12.22.38.3.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.04.24.24.4.48.4h3.84c.24 0 .44-.16.48-.4l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 0 0-.12-.62l-2.03-1.58ZM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2Z"/></svg>
+      </button>
       <div class="home-title" id="homeTitle" contenteditable="true" role="textbox"
            aria-label="標題" data-ph="點這裡輸入標題">${esc(htitle)}</div>
       ${banner?'':`<span class="home-banner__hint">點封面任一處可換圖</span>`}
     </div>
     <button class="btn btn--primary newstall-btn" data-act="new-stall">＋ 建立新攤位</button>
-    ${DB.stalls.length?`<div class="lp-hint">長按攤位可編輯、建立副本或刪除</div><div class="tile-grid">${tiles}</div>`:`<div class="empty">還沒有任何攤位，點上方按鈕開始。</div>`}
+    ${DB.stalls.length?`<div class="tile-grid">${tiles}</div>`:`<div class="empty">還沒有任何攤位，點上方按鈕開始。</div>`}
     <div class="home-credit">create by @nekohige0123</div>
   </div>`;
   const ht=$('#homeTitle');
@@ -1193,6 +1322,9 @@ function renderStall(){
       </div>
     </div>
     <div class="stall__body" id="body"></div>
+    ${isOnlineStall(st)&&(pendingCount(st)||st.syncErr)?
+      `<button class="sync-float ${st.syncErr&&!pendingCount(st)?'err':''}" data-act="sync-now">
+        ${pendingCount(st)?`⏳ ${pendingCount(st)} 筆待同步`:'⚠ 同步失敗'} · 點此重試</button>`:''}
   </div>`;
   const body=$('#body');
   if(UI.tab==='products') renderProducts(st,body);
@@ -1322,7 +1454,7 @@ function renderConfirm(st,body){
     </div>
     <label class="free-toggle ${UI.free?'on':''}">
       <input type="checkbox" data-act="toggle-free" ${UI.free?'checked':''}>
-      <span><b>此單免費（贈送）</b><small>不列入收入，但仍會記錄訂單並扣除庫存</small></span>
+      <span><b>此單免費</b></span>
     </label>
     <button class="btn btn--primary btn--block" data-act="confirm-pay" ${count?'':'disabled'}>${UI.free?'確認贈送出貨':'確認收款 '+money(total)}</button>`;
 }
@@ -1353,10 +1485,12 @@ function renderSettle(st,body){
 
   const orders=st.orders.slice().sort((a,b)=>b.time-a.time);
   const oHtml=orders.length?orders.map(o=>`
-    <div class="order ${UI.openOrders[o.id]?'open':''}">
+    <div class="order ${UI.openOrders[o.id]?'open':''} ${o.pending?'pending':''}">
       <button class="order__head" data-act="toggle-order" data-id="${o.id}">
         <span class="order__time">${fmtTime(o.time)}</span>
         ${o.free?'<span class="free-tag">贈送</span>':''}
+        ${o.pending?'<span class="tag-mini warn">待同步</span>':''}
+        ${o.conflict?'<span class="tag-mini bad">超賣</span>':''}
         <span class="order__total money">${o.free?`<s>${money(o.listTotal)}</s>`:''}${money(o.total)}</span>
         <span class="order__cnt">${o.lines.reduce((a,l)=>a+l.qty,0)} 件</span>
       </button>
@@ -1459,46 +1593,29 @@ function openStockPopup(p){
 /* finish the sale.
    離線攤位：直接在本機扣庫存寫訂單。
    線上攤位：一定即時打伺服器驗證（LockService 保護），成功才更新本機；失敗保留購物車。*/
-async function completeCheckout(st){
-  if(!isOnlineStall(st)){
-    applyPayment(st,UI.free);
-    UI.cart=[]; UI.stage='catalog'; UI.free=false;
-    render(); bigCheck();
-    return;
-  }
+function completeCheckout(st){
   const {order,need}=buildCheckout(st,UI.free);
   if(!order.lines.length) return;
-  const btn=$('[data-act="confirm-pay"]');
-  if(btn){ btn.disabled=true; btn.textContent='連線結帳中…'; }
-  try{
-    const d=await api('checkout',{code:st.code,order,need},20000);
-    if(!d.ok){
-      if(d.state){ applyState(st,d.state); save(); }
-      render();
-      await alertDialog(
-        d.error==='OUT_OF_STOCK'?'結帳失敗：庫存不足':'結帳失敗',
-        (d.message||d.error||'未知錯誤')+'\n\n購物車已保留，庫存已更新為伺服器最新數字，請調整後再送一次。');
-      return;
-    }
-    applyState(st,d.state); save();
-    UI.cart=[]; UI.stage='catalog'; UI.free=false;
-    render(); bigCheck();
-  }catch(err){
-    if(btn){ btn.disabled=false; }
-    render();
-    if(err.message==='OFFLINE') return offlineBlockDialog(st);
-    await alertDialog('結帳失敗',apiErrText(err)+'\n\n購物車已保留，請稍後再送一次。');
+  /* 一律先在本機成交：畫面立刻回應，不等網路 */
+  if(isOnlineStall(st)){
+    order.pending=true;
+    st.pending=st.pending||[];
+    st.pending.push({order,need});
   }
+  applyOrderLocal(st,order);
+  UI.cart=[]; UI.stage='catalog'; UI.free=false;
+  render(); bigCheck();
+  /* 再背景送出；失敗就留在佇列裡，靠小浮動提示 + 下次同步補送 */
+  if(isOnlineStall(st)) setTimeout(()=>pullNow(st,{rerender:true}),60);
 }
 /* pop up any reminder notes attached to products in the cart before the payment actually goes through;
    the confirm-payment page stays underneath, just dimmed */
 function openReminderPopup(reminders,onConfirm){
   const ov=document.createElement('div'); ov.className='pop-dim';
   ov.innerHTML=`<div class="pop-card">
-    <div class="pop-card__h"><h3>⚠️ 結帳前提醒</h3><button class="btn btn--ghost btn--sm" data-x aria-label="關閉">✕</button></div>
     <div class="pop-card__b">
       ${reminders.map(r=>`<div class="reminder-item">
-        <span class="reminder-item__ic">📌</span>
+        <span class="reminder-item__ic">⚠️</span>
         <div><div class="reminder-item__nm">${esc(r.name)}</div><div class="reminder-item__tx">${esc(r.reminder)}</div></div>
       </div>`).join('')}
     </div>
@@ -1509,7 +1626,6 @@ function openReminderPopup(reminders,onConfirm){
   </div>`;
   document.body.appendChild(ov);
   const close=()=>ov.remove();
-  ov.querySelector('[data-x]').onclick=close;
   ov.querySelector('[data-cancel]').onclick=close;
   ov.querySelector('[data-go]').onclick=()=>{ close(); onConfirm(); };
 }
@@ -1708,26 +1824,18 @@ function openSettings(){
   shell('設定',
     `<div class="field"><label>主題色</label>
       <div class="swatches">${THEMES.map(t=>`<button class="swatch ${t.hex===DB.settings.accent?'on':''}" data-hex="${t.hex}" style="--sw:${t.hex}"><span></span><b>${t.name}</b></button>`).join('')}</div>
-      <div class="hint">套用到全部按鈕、分頁標籤與重點數字，設定會保存在本機。</div>
     </div>
-    <div class="field"><label>線上同步：Apps Script 網址</label>
-      <input type="text" id="gasUrl" value="${esc(DB.settings.gasUrl||'')}" placeholder="https://script.google.com/macros/s/..../exec">
-      <div class="hint">只需設定一次，所有線上模式攤位共用。設定方式見「AppsScript-Code.gs」與說明文件。</div>
-      <div style="display:flex;gap:8px;margin-top:8px">
-        <button class="btn btn--sm" id="gasTest">測試連線</button>
-        <span id="gasMsg" style="font-size:12px;color:var(--muted);align-self:center"></span>
-      </div>
+    <div class="field" style="margin-bottom:0;display:flex;gap:8px;align-items:center">
+      <button class="btn btn--sm" id="gasTest">測試連線</button>
+      <span id="gasMsg" style="font-size:12px;color:var(--muted)"></span>
     </div>`,
     `<button class="btn btn--primary" data-x>完成</button>`);
   $$('.swatch',modal).forEach(b=>b.onclick=()=>{
     DB.settings.accent=b.dataset.hex; save(); applyTheme();
     $$('.swatch',modal).forEach(x=>x.classList.toggle('on',x===b));
   });
-  const gu=$('#gasUrl',modal);
-  gu.addEventListener('change',()=>{ DB.settings.gasUrl=gu.value.trim(); save(); });
   $('#gasTest',modal).onclick=async()=>{
-    DB.settings.gasUrl=gu.value.trim(); save();
-    const m=$('#gasMsg',modal); m.textContent='測試中…';
+    const m=$('#gasMsg',modal); m.textContent='測試中…'; m.style.color='var(--muted)';
     try{
       const d=await api('ping',{},12000);
       m.textContent=d&&d.ok?'✓ 連線成功':'✗ 回應異常';
@@ -1744,25 +1852,29 @@ function openStallModal(existing){
   let mode = existing ? (existing.mode||'offline') : 'offline';   // offline | online-new | online-join
   const online = existing && isOnlineStall(existing);
 
+  const MODE_DESC={
+    'offline':'只存在這台裝置，完全不需要網路。<br>建立後無法改成線上模式。',
+    'online-new':'產生一組 4 碼代碼，共用庫存與訂單。<br>其他手機輸入代碼即可加入。',
+    'online-join':'輸入別人給的 4 碼代碼，把雲端上的<br>商品、庫存與訂單同步到這台裝置。'
+  };
   function modeBlock(){
     if(existing) return '';
     return `<div class="field"><label>攤位模式</label>
       <div class="mode-pick">
         <button type="button" class="mode-opt ${mode==='offline'?'on':''}" data-mode="offline">
-          <b>離線模式</b><small>只存在這台裝置，不需網路</small></button>
+          <i>💾</i><b>離線模式</b></button>
         <button type="button" class="mode-opt ${mode==='online-new'?'on':''}" data-mode="online-new">
-          <b>線上模式 · 建立新攤位</b><small>產生 4 碼代碼，其他裝置可加入共用庫存</small></button>
+          <i>☁️</i><b>線上<br>新攤位</b></button>
         <button type="button" class="mode-opt ${mode==='online-join'?'on':''}" data-mode="online-join">
-          <b>線上模式 · 加入既有攤位</b><small>輸入 4 碼代碼，同步雲端上的攤位資料</small></button>
+          <i>🔗</i><b>線上<br>加入</b></button>
       </div>
+      <div class="mode-desc">${MODE_DESC[mode]||''}</div>
       ${mode==='online-join'?`<div style="margin-top:10px"><input type="text" id="sjoin" maxlength="4" placeholder="輸入 4 碼代碼" style="text-transform:uppercase;letter-spacing:.3em;font-family:var(--ff-mono);font-size:20px;text-align:center"></div>`:''}
-      ${mode!=='offline'&&!gasUrl()?`<div class="lock-note" style="margin-top:10px">尚未設定 Apps Script 網址，請先到首頁 🎨 設定裡填寫。</div>`:''}
-      <div class="hint">離線攤位之後無法升級成線上攤位；線上攤位可以單向轉為離線。</div>
     </div>`;
   }
   function bodyHtml(){
     const joinMode = !existing && mode==='online-join';
-    return `${modeBlock()}
+    return `<div class="${existing?'':'create-fixed'}">${modeBlock()}
       ${joinMode?'':`<div class="field"><label>攤位名稱</label><input type="text" id="snm" value="${esc(draft.name)}" placeholder="例如：夜市手作飾品攤" maxlength="40"></div>
       <div class="field"><label>擺攤日期</label><input type="date" id="svdate" value="${draft.vendDate}"></div>
       <div class="field"><label>封面圖（選填）</label>
@@ -1778,8 +1890,7 @@ function openStallModal(existing){
           <button class="btn btn--danger btn--sm" id="toOffline" style="margin-top:10px">永久轉為離線模式</button>
         </div>
       </div>`:''}
-      ${existing?`<div class="hint">建立日期：${fmtDate(existing.createdAt)}（不可更動）。</div>`:(joinMode?'':`<div class="hint">建立日期會記為今天（${fmtDate(Date.now())}）；擺攤日期可自由設定與更改。</div>`)}
-      <div class="err" id="serr"></div>`;
+      <div class="err" id="serr"></div></div>`;
   }
   shell(existing?'編輯攤位':'建立新攤位',bodyHtml(),
     `<button class="btn" data-x2>取消</button><button class="btn btn--primary" id="ssave">${existing?'儲存':'建立'}</button>`);
@@ -2207,8 +2318,30 @@ function seed(){
 if(!load()){ DB={stalls:[],settings:{accent:THEMES[0].hex}}; seed(); }
 applyTheme();
 render();
+initPullToRefresh();
 window.addEventListener('pageshow',applyTheme);
-document.addEventListener('visibilitychange',()=>{ if(!document.hidden) applyTheme(); });
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden) return;
+  applyTheme();
+  const s=stall(); if(isOnlineStall(s)) pullNow(s,{rerender:true});   // 切回 App 立刻同步一次
+});
+window.addEventListener('online',()=>{ const s=stall(); if(isOnlineStall(s)) pullNow(s,{rerender:true}); });
+
+/* 後端網址寫死在 backend-url.txt，開啟時讀進來（檔案優先，沒有才用設定裡手填的） */
+(async function loadBackendUrl(){
+  try{
+    const r=await fetch('backend-url.txt?t='+Date.now(),{cache:'no-store'});
+    if(!r.ok) return;
+    const txt=await r.text();
+    const line=txt.split(/\r?\n/).map(s=>s.trim())
+      .find(s=>s && !s.startsWith('#') && /^https?:\/\//i.test(s));
+    if(line){
+      DB.settings.gasUrlFromFile=line;
+      DB.settings.gasUrl=line;
+      save();
+    }
+  }catch(err){/* 檔案不存在或離線就沿用設定裡的值 */}
+})();
 
 /* ---------- PWA: offline service worker (only when served over https / localhost) ---------- */
 if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')){
