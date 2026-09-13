@@ -1,14 +1,1 @@
-# 攤位收銀台 — 線上模式後端網址
-#
-# 把 Apps Script 部署後拿到的網址，整段貼在最下面「單獨一行」。
-# 結尾一定是 /exec。
-#
-# 貼好後，所有裝置開啟 App 都會自動套用，App 裡不需要再設定任何東西
-#（設定裡只留一顆「測試連線」可以驗證有沒有通）。
-# 換網址之後，記得把 sw.js 裡的版本號 +1，手機下次開啟才會抓到新的。
-#
-# 以 # 開頭的行都會被忽略。沒有填網址的話，線上模式就不能用（離線模式不受影響）。
-#
-# 範例（把下面這行的 # 拿掉並換成你自己的網址）：
-# https://script.google.com/macros/s/AKfycbxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/exec
-
+https://script.google.com/macros/s/AKfycbwBJ9maiYSDrEKpI6oABqwOYo-XGKphSRinkaEJLPgOm_ueENk2oQXntx_oQofj4MyL/exec
