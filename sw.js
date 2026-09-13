@@ -1,7 +1,7 @@
 /* 攤位收銀台 — service worker
    離線可用：第一次連網開啟後，之後沒網路也能用。
    改了 index.html 之後，把下面的版本號 +1（例如 v1 -> v2），使用者下次開啟就會更新。 */
-const VERSION = 'stall-register-v11';
+const VERSION = 'stall-register-v2.0';
 const CORE = './';                 // 相對於 sw.js 所在資料夾
 const APP_SHELL = [
   './',
