@@ -245,6 +245,13 @@
   .stepper button:hover:not(:disabled){background:var(--surface-2)}
   .stepper button:disabled{opacity:.35;cursor:not-allowed}
   .stepper .q{min-width:30px;text-align:center;font-family:var(--ff-mono);font-weight:600;font-size:15px}
+  /* 數量可以直接打字 */
+  .stepper input.q{
+    width:54px;min-width:0;padding:7px 2px;border:1px solid var(--line-strong);border-radius:8px;
+    background:var(--surface);color:var(--ink);-moz-appearance:textfield
+  }
+  .stepper input.q::-webkit-outer-spin-button,
+  .stepper input.q::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 
   .checkout-foot{
     position:sticky;bottom:0;z-index:15;margin:20px -14px -40px;
@@ -1182,7 +1189,7 @@ async function askConvertOffline(st){
   return true;
 }
 /* ---------- 下拉重新同步（取代瀏覽器原生的下拉刷新） ---------- */
-let ptrEl=null, ptrStartY=0, ptrDist=0, ptrOn=false;
+let ptrEl=null, ptrStartY=0, ptrStartX=0, ptrDist=0, ptrOn=false;
 function ptrNode(){
   if(!ptrEl){ ptrEl=document.createElement('div'); ptrEl.className='ptr'; ptrEl.innerHTML='<i>↓</i>'; document.body.appendChild(ptrEl); }
   return ptrEl;
@@ -1202,11 +1209,13 @@ function initPullToRefresh(){
     if(window.scrollY>3) return;
     if(modal.open||document.querySelector('.pop-dim,.fs-page')) return;
     if(!isOnlineStall(stall())) return;
-    ptrStartY=e.touches[0].clientY; ptrOn=true;
+    if(calcEl&&(calcEl.contains(e.target)||e.touches[0].clientX>window.innerWidth-48)) return;  // 右側是計算機的手勢區
+    ptrStartY=e.touches[0].clientY; ptrStartX=e.touches[0].clientX; ptrOn=true;
   },{passive:true});
   document.addEventListener('touchmove',e=>{
     if(!ptrOn) return;
-    const dy=e.touches[0].clientY-ptrStartY;
+    const dy=e.touches[0].clientY-ptrStartY, dx=e.touches[0].clientX-ptrStartX;
+    if(Math.abs(dx)>Math.abs(dy)){ ptrOn=false; ptrDist=0; ptrHide(); return; }   // 橫向滑動不算下拉
     if(dy<=0||window.scrollY>3){ ptrOn=false; ptrDist=0; ptrHide(); return; }
     ptrDist=dy;
     if(dy>8) e.preventDefault();          // 吃掉這個手勢，避免跟頁面捲動打架
@@ -1319,6 +1328,40 @@ const CALC_KEYS=[
   ['1',''],['2',''],['3',''],['+','op'],
   ['0','w2'],['.',''],['=','eq']
 ];
+function setCalcOpen(open){
+  if(!calcEl) return;
+  calcEl.classList.toggle('open',!!open);
+  const h=calcEl.querySelector('.calc-handle');
+  if(h) h.textContent=open?'❯':'❮';
+}
+/* 從畫面右側往左滑＝叫出計算機；在計算機上往右滑＝收回去 */
+function initCalcSwipe(){
+  let sx=0,sy=0,on=false;
+  document.addEventListener('touchstart',e=>{
+    on=false;
+    if(!calcEl||e.touches.length!==1) return;
+    const t=e.touches[0];
+    const onCalc=calcEl.contains(e.target);
+    const nearEdge=t.clientX>window.innerWidth-48;
+    if(!onCalc&&!nearEdge) return;
+    sx=t.clientX; sy=t.clientY; on=true;
+  },{passive:true});
+  document.addEventListener('touchmove',e=>{
+    if(!on||!e.touches.length) return;
+    const dx=e.touches[0].clientX-sx, dy=e.touches[0].clientY-sy;
+    if(Math.abs(dy)>Math.abs(dx)&&Math.abs(dy)>14){ on=false; return; }  // 直向手勢留給捲動
+    if(Math.abs(dx)>10) e.preventDefault();
+  },{passive:false});
+  const end=e=>{
+    if(!on) return; on=false;
+    const t=e.changedTouches&&e.changedTouches[0]; if(!t) return;
+    const dx=t.clientX-sx, dy=t.clientY-sy;
+    if(Math.abs(dx)<40||Math.abs(dy)>Math.abs(dx)) return;
+    buzz(); setCalcOpen(dx<0);
+  };
+  document.addEventListener('touchend',end);
+  document.addEventListener('touchcancel',end);
+}
 function ensureCalc(show){
   if(!show){ if(calcEl){ calcEl.remove(); calcEl=null; } return; }
   if(calcEl) return;                      // 已經在畫面上就別重建，狀態與展開與否才不會被洗掉
@@ -1334,11 +1377,7 @@ function ensureCalc(show){
     </div>`;
   document.body.appendChild(calcEl);
   const handle=calcEl.querySelector('.calc-handle');
-  handle.onclick=()=>{
-    buzz();
-    calcEl.classList.toggle('open');
-    handle.textContent=calcEl.classList.contains('open')?'❯':'❮';
-  };
+  handle.onclick=()=>{ buzz(); setCalcOpen(!calcEl.classList.contains('open')); };
   calcEl.querySelectorAll('[data-k]').forEach(b=>{ b.onclick=()=>calcPress(b.dataset.k); });
   calcDraw();
 }
@@ -1582,7 +1621,7 @@ function cartLineRow(st,l){
     </div>
     <div class="stepper">
       <button data-act="line-dec" data-uid="${l.uid}" aria-label="減少">−</button>
-      <span class="q">${l.qty}</span>
+      <input class="q" type="number" min="0" inputmode="numeric" value="${l.qty}" data-qty-uid="${l.uid}" aria-label="數量">
       <button data-act="line-inc" data-uid="${l.uid}" ${canInc?'':'disabled'} aria-label="增加">＋</button>
     </div>
     <div class="cart-line__sub money">${money(r.sub)}</div>
@@ -1929,9 +1968,30 @@ app.addEventListener('click',async e=>{
   }
 });
 app.addEventListener('keydown',e=>{
+  if(e.target.closest('[data-qty-uid]')){
+    if(e.key==='Enter'){ e.preventDefault(); e.target.blur(); }   // 打完數字按 Enter 直接收鍵盤
+    return;
+  }
   if(e.key!=='Enter' && e.key!==' ') return;
   const el=e.target.closest('[role="button"][data-act]');
   if(el){ e.preventDefault(); el.click(); }
+});
+/* 購物車數量：直接輸入數字 */
+app.addEventListener('change',e=>{
+  const inp=e.target.closest('[data-qty-uid]'); if(!inp) return;
+  const st=stall(); if(!st) return;
+  const l=UI.cart.find(x=>x.uid===inp.dataset.qtyUid); if(!l) return;
+  const v=parseInt(inp.value,10);
+  if(isNaN(v)||v<=0){                                   // 填 0 或清空＝移除這一列
+    UI.cart=UI.cart.filter(x=>x.uid!==l.uid);
+    renderCheckout(st,$('#body')); return;
+  }
+  const max = l.kind==='product' ? pvRemaining(st,l.pvId,l.uid,l.useReserved)
+                                 : bundleMaxBuild(st,bundle(st,l.bundleId),l.picks,l.uid);
+  const cap = Math.max(1,max);
+  l.qty = Math.min(v,cap);
+  if(v>cap) toast(`可售數量只剩 ${cap}`);
+  renderCheckout(st,$('#body'));
 });
 
 /* ============================================================ MODALS ============================================================ */
@@ -2388,7 +2448,8 @@ function openAddSheet(st,kind,id){
     return `${hero}${groups}
       <div class="qty-pick"><span class="label">數量</span>
         <div class="stepper">
-          <button data-q="-1" ${qty<=1?'disabled':''}>−</button><span class="q">${qty}</span>
+          <button data-q="-1" ${qty<=1?'disabled':''}>−</button>
+          <input class="q" type="number" min="0" inputmode="numeric" id="qtyIn" value="${qty}" aria-label="數量">
           <button data-q="1" ${qty>=mq?'disabled':''}>＋</button>
         </div>
       </div>`;
@@ -2401,6 +2462,16 @@ function openAddSheet(st,kind,id){
       sel[i][j]=se.value; refresh();
     });
     $$('[data-q]',modal).forEach(bn=>bn.onclick=()=>{ qty=Math.max(0,qty+ +bn.dataset.q); refresh(); });
+    const qi=$('#qtyIn',modal);
+    if(qi){
+      qi.onchange=()=>{
+        const mq=maxQty(), v=parseInt(qi.value,10);
+        qty=isNaN(v)||v<=0 ? 0 : Math.min(v,mq);
+        if(!isNaN(v)&&v>mq) toast(`可加入數量只剩 ${mq}`);
+        refresh();
+      };
+      qi.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); qi.blur(); } };
+    }
     const rc=$('#useResChk',modal);
     if(rc) rc.onchange=()=>{ useReserved=rc.checked; refresh(); };
   }
@@ -2465,6 +2536,7 @@ if(!load()){ DB={stalls:[],settings:{accent:THEMES[0].hex}}; seed(); }
 applyTheme();
 render();
 initPullToRefresh();
+initCalcSwipe();
 window.addEventListener('pageshow',applyTheme);
 document.addEventListener('visibilitychange',()=>{
   if(document.hidden) return;
