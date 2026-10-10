@@ -318,6 +318,19 @@
   .pie-leg .vv{font-family:var(--ff-mono);color:var(--muted);flex-shrink:0}
   .hchart{width:100%;overflow-x:auto}
   .hchart svg{display:block;height:auto}
+  /* 銷量累計折線圖 */
+  .tr-legs{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+  .tr-leg{display:flex;align-items:center;gap:6px;font-size:12.5px;padding:5px 10px;max-width:100%;
+          border:1px solid var(--line);border-radius:999px;background:var(--surface-2);cursor:pointer}
+  .tr-leg.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,var(--surface))}
+  .tr-leg input{width:14px;height:14px;margin:0;accent-color:var(--accent);flex-shrink:0}
+  .tr-leg i{width:10px;height:10px;border-radius:3px;flex-shrink:0}
+  .tr-leg .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:9.5em}
+  .tr-leg .vv{font-family:var(--ff-mono);color:var(--muted);flex-shrink:0}
+  .tr-hint{font-size:12px;color:var(--muted);margin-top:10px}
+  .trend{width:100%}
+  .trend svg{display:block;width:100%;height:auto}
+  .tr-dot{opacity:.85}
 
   .filter-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
   input[type=date],input[type=text],input[type=number],select{
@@ -1243,7 +1256,72 @@ function syncCalc(){ ensureCalc(UI.screen==='stall' && UI.tab==='checkout' && UI
 function render(){
   UI.screen==='home' ? renderHome() : renderStall();
   syncCalc();
+  navSync();
 }
+
+/* ---------- 實體返回鍵：退回上一層，而不是直接關掉 App ----------
+   每多開一層（攤位頁 / 確認收款 / 彈窗 / 全螢幕頁 / 計算機）就往 history 推一筆，
+   手機按返回時就會先被我們接到，只關掉最上面那一層；回到首頁後再按才會離開 App。 */
+let navDepth=0, navSkip=0, navBusy=false, navRaf=0;
+function navLevels(){
+  let n=0;
+  if(UI.screen==='stall'){
+    n++;
+    if(UI.tab==='checkout'&&UI.stage==='confirm') n++;
+  }
+  n+=document.querySelectorAll('.pop-dim:not(.nav-closing),.fs-page:not(.nav-closing)').length;
+  const md=document.getElementById('modal');   if(md&&md.open) n++;
+  const cr=document.getElementById('cropper'); if(cr&&cr.open) n++;
+  if(calcEl&&calcEl.classList.contains('open')) n++;
+  return n;
+}
+function navSync(){
+  if(navBusy) return;
+  const want=navLevels();
+  if(want>navDepth){
+    const k=want-navDepth; navDepth=want;
+    for(let i=0;i<k;i++) history.pushState({nav:navDepth-k+1+i},'');
+  }else if(want<navDepth){
+    const k=navDepth-want; navDepth=want; navSkip+=k;
+    history.go(-k);
+  }
+}
+/* 關掉最上面一層；順序＝畫面上的疊放順序（對話框在最上面） */
+function navCloseTop(){
+  const cr=document.getElementById('cropper');
+  if(cr&&cr.open){ cr.close(); cr.innerHTML=''; return; }
+  const md=document.getElementById('modal');
+  if(md&&md.open){ closeModal(); return; }
+  const pops=document.querySelectorAll('.pop-dim:not(.nav-closing)');
+  if(pops.length){ pops[pops.length-1].remove(); return; }
+  const fs=document.querySelectorAll('.fs-page:not(.nav-closing)');
+  if(fs.length){
+    const el=fs[fs.length-1], b=el.querySelector('#fsBack');
+    el.classList.add('nav-closing');
+    if(b) b.click(); else el.remove();
+    return;
+  }
+  if(calcEl&&calcEl.classList.contains('open')){ setCalcOpen(false); return; }
+  if(UI.screen==='stall'&&UI.tab==='checkout'&&UI.stage==='confirm'){ UI.stage='catalog'; render(); return; }
+  if(UI.screen==='stall'){ stopSync(); save(); UI.screen='home'; UI.stallId=null; UI.cart=[]; UI.stage='catalog'; UI.free=false; render(); return; }
+}
+window.addEventListener('popstate',()=>{
+  if(navSkip>0){ navSkip--; return; }
+  navDepth=Math.max(0,navDepth-1);
+  navBusy=true;
+  try{ navCloseTop(); }catch(err){}
+  navBusy=false;
+  navSync();
+});
+/* App 自己（按鈕、✕、手勢）關掉某一層時，history 也要跟著退回去 */
+function navTouch(){
+  if(navRaf) return;
+  navRaf=setTimeout(()=>{ navRaf=0; navSync(); },0);   /* 用 timer 不用 rAF：畫面沒在畫時也要同步 */
+}
+try{
+  new MutationObserver(navTouch).observe(document.documentElement,
+    {childList:true,subtree:true,attributes:true,attributeFilter:['open','class']});
+}catch(err){}
 
 const reduceMotion = ()=>window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)').matches;
 const ANIMS=['anim-in-right','anim-out-right','anim-in-left','anim-up'];
@@ -1739,11 +1817,25 @@ function openIncomeDetail(st){
         ${revArr.length?pieSVG(revArr,revTotal):`<div class="empty" style="padding:20px">尚無收入</div>`}
       </div>
       <div class="panel">
+        <div class="panel__title">銷量累計趨勢（勾選要顯示的線）</div>
+        <div id="trendBox"></div>
+      </div>
+      <div class="panel">
         <div class="panel__title">各品項銷量（含不同規格；套組售出併入商品）</div>
         ${units.length?barSVG(units):`<div class="empty" style="padding:20px">尚無銷售</div>`}
       </div>
     </div>`;
   document.body.appendChild(ov);
+  const trendBox=ov.querySelector('#trendBox');
+  const drawTrend=()=>{
+    trendBox.innerHTML=trendSVG(st);
+    $$('[data-trend]',trendBox).forEach(cb=>cb.onchange=()=>{
+      const k=cb.dataset.trend;
+      if(cb.checked) trendSel[k]=1; else delete trendSel[k];
+      drawTrend();
+    });
+  };
+  drawTrend();
   let closed=false;
   const close=()=>{
     if(closed) return; closed=true;
@@ -1853,6 +1945,105 @@ function barSVG(units){
       <text class="ck-name" x="${bx+bw/2}" y="${H-padB+16}" text-anchor="end" transform="rotate(-38 ${bx+bw/2} ${H-padB+16})">${esc(lab)}</text>
     </g>`;}).join('');
   return `<div class="hchart"><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="各品項銷量長條圖">${grid}${bars}</svg></div>`;
+}
+
+/* ---------- 銷量對時間：累計折線（只會往上，不會往下） ----------
+   把每筆訂單展開成各商品的件數增量，再沿時間累加。
+   套組會依它的組成扣庫存，所以銷量併入對應商品（和長條圖一致）。 */
+function salesTrend(st){
+  const nameOf={};
+  (st.products||[]).forEach(p=>{ nameOf[p.id]=p.name; });
+  const steps=[];
+  (st.orders||[]).slice().sort((a,b)=>a.time-b.time).forEach(o=>{
+    const inc={};
+    (o.lines||[]).forEach(l=>{
+      const ents=(l.restore&&l.restore.length)?l.restore:null;
+      if(ents){
+        ents.forEach(en=>{
+          const hit=resolvePv(st,en.pvId);
+          const id=(hit&&hit.product)?hit.product.id:('gone:'+(l.productId||l.name));
+          if(!nameOf[id]) nameOf[id]=l.name;
+          inc[id]=(inc[id]||0)+(Number(en.qty)||0);
+        });
+      }else{
+        const id=l.productId||('gone:'+l.name);
+        if(!nameOf[id]) nameOf[id]=l.name;
+        inc[id]=(inc[id]||0)+(Number(l.qty)||0);
+      }
+    });
+    if(Object.keys(inc).length) steps.push({t:Number(o.time)||0,inc});
+  });
+  const keys=[],seen={};
+  steps.forEach(s=>Object.keys(s.inc).forEach(k=>{ if(!seen[k]){ seen[k]=1; keys.push(k); } }));
+  const run={},cum={};
+  keys.forEach(k=>{ run[k]=0; cum[k]=[]; });
+  const times=[],tot=[]; let total=0;
+  steps.forEach(s=>{
+    Object.keys(s.inc).forEach(k=>{ run[k]+=s.inc[k]; total+=s.inc[k]; });
+    times.push(s.t);
+    keys.forEach(k=>cum[k].push(run[k]));
+    tot.push(total);
+  });
+  const series=keys.map(k=>({key:k,name:nameOf[k]||k,vals:cum[k],last:run[k]}))
+                   .sort((a,b)=>b.last-a.last||String(a.name).localeCompare(String(b.name)));
+  return {times,series,total:tot,grand:total};
+}
+let trendSel=null;                       /* 勾了哪幾條線；預設只看總銷量 */
+function trendSVG(st){
+  const d=salesTrend(st);
+  if(!d.times.length) return `<div class="empty" style="padding:20px">尚無銷售紀錄</div>`;
+  if(!trendSel) trendSel={TOTAL:1};
+  const colorOf={TOTAL:'var(--ink)'};   /* 調色盤第一色可能等於主題色，總銷量另外用 */
+  d.series.forEach((s,i)=>{ colorOf[s.key]=CHART_PAL[i%CHART_PAL.length]; });
+  const rows=[{key:'TOTAL',name:'總銷量',vals:d.total,last:d.grand}]
+    .concat(d.series.map(s=>({key:s.key,name:s.name,vals:s.vals,last:s.last})));
+  const picked=rows.filter(r=>trendSel[r.key]);
+
+  const W=440,H=250,padL=34,padR=14,padT=14,padB=36;
+  const plotW=W-padL-padR, plotH=H-padT-padB;
+  const t0=d.times[0], t1=d.times[d.times.length-1], span=t1-t0;
+  const x=t=>span>0?padL+(t-t0)/span*plotW:padL+plotW/2;
+  const peak=picked.length?Math.max.apply(null,picked.map(r=>r.last)):0;
+  const max=niceMax(peak);
+  const y=v=>padT+plotH-(v/max)*plotH;
+
+  const grid=[0,1,2,3,4].map(i=>max/4*i).map(t=>
+    `<line class="ck-grid" x1="${padL}" y1="${y(t).toFixed(1)}" x2="${W-padR}" y2="${y(t).toFixed(1)}"/>`+
+    `<text class="ck-axis" x="${padL-6}" y="${(y(t)+3.5).toFixed(1)}" text-anchor="end">${Math.round(t)}</text>`).join('');
+
+  const oneDay = span<86400000 && new Date(t0).toDateString()===new Date(t1).toDateString();
+  const pad2=n=>String(n).padStart(2,'0');
+  const fmtX=t=>{ const dt=new Date(t);
+    return oneDay?`${pad2(dt.getHours())}:${pad2(dt.getMinutes())}`
+                 :`${pad2(dt.getMonth()+1)}/${pad2(dt.getDate())}`; };
+  const xs=span>0?[t0,t0+span/2,t1]:[t0];
+  const xlab=xs.map((t,i)=>{
+    const anc=xs.length===1?'middle':(i===0?'start':i===xs.length-1?'end':'middle');
+    return `<text class="ck-axis" x="${x(t).toFixed(1)}" y="${H-padB+17}" text-anchor="${anc}">${fmtX(t)}</text>`;
+  }).join('');
+
+  const lines=picked.map(r=>{
+    const c=colorOf[r.key];
+    let pts=`${x(t0).toFixed(1)},${y(0).toFixed(1)}`, prev=0;   /* 從 0 起跳，成交那一刻才往上 */
+    d.times.forEach((t,i)=>{
+      pts+=` ${x(t).toFixed(1)},${y(prev).toFixed(1)} ${x(t).toFixed(1)},${y(r.vals[i]).toFixed(1)}`;
+      prev=r.vals[i];
+    });
+    pts+=` ${x(t1).toFixed(1)},${y(prev).toFixed(1)}`;
+    const dots=d.times.map((t,i)=>`<circle class="tr-dot" cx="${x(t).toFixed(1)}" cy="${y(r.vals[i]).toFixed(1)}" r="2.6" fill="${c}"/>`).join('');
+    const sw=r.key==='TOTAL'?3:2.2;
+    return `<polyline points="${pts}" fill="none" stroke="${c}" stroke-width="${sw}" stroke-linejoin="round" stroke-linecap="round"/>${dots}`;
+  }).join('');
+
+  const legend=rows.map(r=>`<label class="tr-leg${trendSel[r.key]?' on':''}">
+      <input type="checkbox" data-trend="${esc(r.key)}" ${trendSel[r.key]?'checked':''}>
+      <i style="background:${colorOf[r.key]}"></i>
+      <span class="nm">${esc(r.name)}</span><span class="vv">${r.last}</span>
+    </label>`).join('');
+
+  return `<div class="trend"><svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="銷量累計折線圖">${grid}${xlab}${lines}</svg></div>
+    <div class="tr-legs">${legend}</div>
+    ${picked.length?'':'<div class="tr-hint">勾選上面任一項，就會畫出它的累計銷量曲線。</div>'}`;
 }
 
 /* ============================================================ EVENTS ============================================================ */
