@@ -9,7 +9,7 @@
  *   Stalls    攤位索引：code / stallId / name / vendDate / createdAt / catalogRev / updatedAt
  *   Catalog   商品目錄（JSON 分段存放）：code / seq / chunk
  *   Stock     庫存（一個規格一列）：code / pvId / label / stock / sold
- *   Orders    訂單紀錄：code / orderId / time / free / total / listTotal / lines
+ *   Orders    訂單紀錄：code / orderId / time / free / total / listTotal / lines / dev
  *   Failures  結帳失敗紀錄：code / time / reason / detail
  ****************************************************************/
 
@@ -68,7 +68,11 @@ function sheetOf(name, headers) {
 function shStalls()   { return sheetOf('Stalls',   ['code', 'stallId', 'name', 'vendDate', 'createdAt', 'catalogRev', 'updatedAt']); }
 function shCatalog()  { return sheetOf('Catalog',  ['code', 'seq', 'chunk']); }
 function shStock()    { return sheetOf('Stock',    ['code', 'pvId', 'label', 'stock', 'sold']); }
-function shOrders()   { return sheetOf('Orders',   ['code', 'orderId', 'time', 'free', 'total', 'listTotal', 'lines']); }
+function shOrders() {
+  var s = sheetOf('Orders', ['code', 'orderId', 'time', 'free', 'total', 'listTotal', 'lines', 'dev']);
+  if (s.getLastColumn() < 8) s.getRange(1, 8).setValue('dev');   // 舊試算表補上欄位標題
+  return s;
+}
 function shFailures() { return sheetOf('Failures', ['code', 'time', 'reason', 'detail']); }
 
 function up(v) { return String(v || '').trim().toUpperCase(); }
@@ -238,7 +242,8 @@ function readOrders(code) {
       free: String(x.v[3]).toUpperCase() === 'TRUE',
       total: Number(x.v[4]) || 0,
       listTotal: Number(x.v[5]) || 0,
-      lines: lines
+      lines: lines,
+      dev: String(x.v[7] || '')
     };
   }).sort(function (a, b) { return a.time - b.time; });
 }
@@ -342,6 +347,15 @@ function checkout(req) {
     var cat = readCatalog(code);
     if (!cat) return { ok: false, error: 'NO_STALL', message: '找不到代碼 ' + code + ' 的攤位' };
 
+    /* 冪等檢查：如果這個 order id 已經寫過了，直接回成功。
+       會發生在「伺服器已經寫入成功，但回應在網路上掉了」的情況 —— 手機判定失敗，
+       把這筆留在離線佇列，下次連上網再送一次。少了這段就會重複寫入並重複扣庫存。 */
+    var oid = String((req.order || {}).id || '');
+    if (oid) {
+      var already = rowsFor(shOrders(), code).filter(function (x) { return String(x.v[1]) === oid; });
+      if (already.length) return { ok: true, duplicate: true, state: snapshot(code) };
+    }
+
     var stock = readStock(code);
     var resv  = reservedMap(cat);
     var label = labelMap(cat);
@@ -380,7 +394,8 @@ function checkout(req) {
       o.time ? new Date(Number(o.time)) : new Date(),
       o.free ? 'TRUE' : 'FALSE',
       Number(o.total) || 0, Number(o.listTotal) || 0,
-      JSON.stringify(o.lines || []).substring(0, 45000)
+      JSON.stringify(o.lines || []).substring(0, 45000),
+      String(o.dev || '')
     ]);
     touchStall(code, {});
     return { ok: true, state: snapshot(code) };

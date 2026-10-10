@@ -1,5 +1,5 @@
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#0f7a58">
 <meta name="color-scheme" content="light">
 <meta name="mobile-web-app-capable" content="yes">
@@ -51,6 +51,7 @@
     margin:0;background:var(--bg);color:var(--ink);
     font-family:var(--ff-sans);font-size:15px;line-height:1.5;
     -webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent;
+    touch-action:manipulation;                 /* 不給雙擊放大，順便去掉點擊的 300ms 延遲 */
   }
   button{font-family:inherit;color:inherit}
   h1,h2,h3{margin:0;text-wrap:balance;letter-spacing:-.01em}
@@ -328,7 +329,19 @@
   .tr-leg .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:9.5em}
   .tr-leg .vv{font-family:var(--ff-mono);color:var(--muted);flex-shrink:0}
   .tr-hint{font-size:12px;color:var(--muted);margin-top:10px}
-  .trend{width:100%}
+  .tr-zoom{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);margin-bottom:8px}
+  .tr-zoom b{font-family:var(--ff-mono);color:var(--ink);font-weight:600}
+  .tr-zoom button{margin-left:auto;font-size:12px;padding:3px 10px;border-radius:999px;
+                  border:1px solid var(--line);background:var(--surface-2);color:var(--ink);cursor:pointer}
+  .tag-mini.dup{background:var(--danger-weak);color:var(--danger)}
+  .dup-note{font-size:12.5px;line-height:1.6;color:var(--ink);background:var(--danger-weak);
+            border-radius:10px;padding:10px 12px;margin-bottom:10px}
+  .dup-row{display:flex;gap:8px;align-items:baseline;font-size:12.5px;padding:6px 0;border-bottom:1px solid var(--line)}
+  .dup-row:last-child{border-bottom:0}
+  .dup-row .t{font-family:var(--ff-mono);color:var(--muted);flex-shrink:0}
+  .dup-row .n{flex:1;min-width:0}
+  .dup-row .c{font-family:var(--ff-mono);color:var(--danger);font-weight:700;flex-shrink:0}
+  .trend{width:100%;touch-action:pan-y}      /* 直向捲動留給頁面，橫向與雙指縮放給時間軸 */
   .trend svg{display:block;width:100%;height:auto}
   .tr-dot{opacity:.85}
 
@@ -644,6 +657,13 @@
 const $  = (s,r=document)=>r.querySelector(s);
 const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
 const uid = ()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+/* 每台裝置一組固定代號，跟著訂單一起存。
+   用途：分辨「同一筆結帳被兩台裝置各送了一次」和「兩位客人剛好買一樣的東西」。 */
+function deviceId(){
+  DB.settings=DB.settings||{};
+  if(!DB.settings.deviceId) { DB.settings.deviceId=uid().slice(-5).toUpperCase(); save(); }
+  return DB.settings.deviceId;
+}
 const esc = s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money = n=>'$'+Number(n||0).toLocaleString('en-US',{maximumFractionDigits:2});
 const pad = x=>String(x).padStart(2,'0');
@@ -956,7 +976,7 @@ function buildCheckout(st,free){
       total+=b.price*l.qty;
     }
   });
-  const order={id:uid(),time:Date.now(),free:!!free,listTotal:total,total:free?0:total,lines};
+  const order={id:uid(),time:Date.now(),free:!!free,listTotal:total,total:free?0:total,dev:deviceId(),lines};
   return {order,need:Object.keys(need).map(k=>need[k])};
 }
 /* 把一筆訂單套用到本機（扣庫存、累加收入、寫入紀錄） */
@@ -1722,6 +1742,50 @@ function renderConfirm(st,body){
     <button class="btn btn--primary btn--block" data-act="confirm-pay" ${count?'':'disabled'}>${UI.free?'確認贈送出貨':'確認收款 '+money(total)}</button>`;
 }
 
+/* ---------------- 重複訂單偵測 ----------------
+   兩種完全不同的情況：
+   A「同一個 order id 出現多次」= 伺服器把同一筆結帳寫了不只一份（舊版後端的 bug，
+     因為結帳回應在網路上掉了、手機重送時後端沒做冪等檢查）。這種百分之百是多的。
+   B「不同 id、內容相同、時間相近、而且來自不同裝置」= 很可能兩台同時輸入了同一筆。
+     只能說「可疑」，因為兩位客人買一樣的東西在資料上長得一模一樣。 */
+function dupIdCounts(st){
+  const n={}; (st.orders||[]).forEach(o=>{ n[o.id]=(n[o.id]||0)+1; });
+  return n;
+}
+function orderSig(o){
+  return (o.lines||[]).map(l=>[l.kind,l.productId||l.bundleId||l.name,l.detail||'',l.qty,l.unitPrice].join('\u0001'))
+    .sort().join('\u0002')+'\u0002'+(o.free?'F':'P')+'\u0002'+(o.total||0);
+}
+function orderDesc(o){
+  return (o.lines||[]).map(l=>l.name+(l.detail?`（${l.detail}）`:'')+' ×'+l.qty).join(' ＋ ');
+}
+/* 內容相同、相鄰兩筆相隔 <= win 毫秒的群組（同一個 id 的重複列先收掉，那是 A 類） */
+function suspectDupes(st,win){
+  win=win||120000;
+  const seen={}, os=[];
+  (st.orders||[]).slice().sort((a,b)=>a.time-b.time).forEach(o=>{
+    if(seen[o.id]) return; seen[o.id]=1; os.push(o);
+  });
+  const used={}, out=[];
+  for(let i=0;i<os.length;i++){
+    if(used[i]) continue;
+    const sg=orderSig(os[i]); const g=[os[i]]; const gi=[i];
+    for(let j=i+1;j<os.length;j++){
+      if(os[j].time-g[g.length-1].time>win) break;
+      if(used[j]||orderSig(os[j])!==sg) continue;
+      used[j]=1; g.push(os[j]); gi.push(j);
+    }
+    if(g.length>1){
+      gi.forEach(k=>used[k]=1);
+      const devs=[]; g.forEach(o=>{ const d=o.dev||''; if(devs.indexOf(d)<0) devs.push(d); });
+      out.push({orders:g,devs:devs,
+                crossDevice:devs.filter(d=>d).length>1,
+                noDevInfo:devs.some(d=>!d)});
+    }
+  }
+  return out;
+}
+
 /* ---------------- SETTLE ---------------- */
 function niceMax(v){ if(v<=0)return 10; const m=Math.pow(10,Math.floor(Math.log10(v))); const n=v/m; const s=n<=1?1:n<=2?2:n<=5?5:10; return s*m; }
 function renderSettle(st,body){
@@ -1747,6 +1811,8 @@ function renderSettle(st,body){
     </div>`;}).join('');
 
   const orders=st.orders.slice().sort((a,b)=>b.time-a.time);
+  const dupN=dupIdCounts(st), dupSeen={};
+  const dupExtra=Object.keys(dupN).reduce((a,k)=>a+(dupN[k]>1?dupN[k]-1:0),0);
   const oHtml=orders.length?orders.map(o=>`
     <div class="order ${UI.openOrders[o.id]?'open':''} ${o.pending?'pending':''}">
       <button class="order__head" data-act="toggle-order" data-id="${o.id}">
@@ -1754,6 +1820,7 @@ function renderSettle(st,body){
         ${o.free?'<span class="free-tag">贈送</span>':''}
         ${o.pending?'<span class="tag-mini warn">待同步</span>':''}
         ${o.conflict?'<span class="tag-mini bad">超賣</span>':''}
+        ${dupN[o.id]>1?`<span class="tag-mini dup">重複 ${dupSeen[o.id]=(dupSeen[o.id]||0)+1}/${dupN[o.id]}</span>`:''}
         <span class="order__total money">${o.free?`<s>${money(o.listTotal)}</s>`:''}${money(o.total)}</span>
         <span class="order__cnt">${o.lines.reduce((a,l)=>a+l.qty,0)} 件</span>
       </button>
@@ -1779,12 +1846,56 @@ function renderSettle(st,body){
         <span>訂單紀錄 <span style="font-weight:400;color:var(--muted);margin-left:6px">共 ${orders.length} 筆</span></span>
         ${orders.length?`<button class="btn btn--danger btn--sm" data-act="clear-orders" style="margin-left:auto">清除全部</button>`:''}
       </div>
+      ${dupExtra?`<div class="dup-note"><b>偵測到 ${dupExtra} 列重複紀錄。</b>
+        標著「重複 n/m」的訂單代表<b>同一次結帳</b>被存了 m 份（訂單編號一模一樣），是舊版後端沒做冪等檢查造成的。
+        每組<b>留一份、其餘刪掉</b>即可，刪除會同時把庫存加回去。新版已修掉，不會再發生。</div>`:''}
       <div class="orders">${oHtml}</div>
     </div>`;
 }
 
+/* 統計頁的兩個重複面板：A 重複的訂單編號（確定多餘）／B 疑似兩台各送一次 */
+function dupPanelHtml(st){
+  const dupN=dupIdCounts(st);
+  const ids=Object.keys(dupN).filter(k=>dupN[k]>1);
+  const first={}; (st.orders||[]).forEach(o=>{ if(!first[o.id]) first[o.id]=o; });
+  let html='';
+
+  if(ids.length){
+    const extra=ids.reduce((a,k)=>a+dupN[k]-1,0);
+    const infl=ids.reduce((a,k)=>a+(first[k].free?0:(first[k].total||0))*(dupN[k]-1),0);
+    const qty=ids.reduce((a,k)=>a+(first[k].lines||[]).reduce((b,l)=>b+(l.qty||0),0)*(dupN[k]-1),0);
+    const rows=ids.map(k=>first[k]).sort((a,b)=>a.time-b.time).map(o=>
+      `<div class="dup-row"><span class="t">${fmtTime(o.time)}</span>
+        <span class="n">${esc(orderDesc(o))}</span><span class="c">×${dupN[o.id]}</span></div>`).join('');
+    html+=`<div class="panel">
+      <div class="panel__title">重複的訂單編號（可直接刪除）</div>
+      <div class="dup-note">以下 <b>${ids.length}</b> 筆訂單各被存了不只一份，總共多出 <b>${extra}</b> 列。
+        收入因此虛增 <b>${money(infl)}</b>、庫存被多扣 <b>${qty}</b> 件。
+        到下面訂單紀錄找「重複 n/m」標籤，每組<b>留一份、其餘刪掉</b>，刪除會把庫存加回去。</div>
+      ${rows}</div>`;
+  }
+
+  const all=suspectDupes(st,120000);
+  if(all.length){
+    const cross=all.filter(g=>g.crossDevice);
+    const unknown=all.filter(g=>g.noDevInfo).length;
+    const body=cross.length
+      ? cross.map(g=>`<div class="dup-row"><span class="t">${fmtTime(g.orders[0].time)}</span>
+          <span class="n">${esc(orderDesc(g.orders[0]))}<br>
+            <span style="color:var(--muted);font-size:11.5px">裝置 ${esc(g.devs.filter(d=>d).join('、'))}</span></span>
+          <span class="c">×${g.orders.length}</span></div>`).join('')
+      : `<div class="empty" style="padding:14px">沒有找到來自不同裝置的重複訂單。</div>`;
+    html+=`<div class="panel">
+      <div class="panel__title">疑似重複送出（內容相同、2 分鐘內、不同裝置）</div>
+      ${unknown?`<div class="tr-hint" style="margin:0 0 10px">另有 <b>${unknown}</b> 組內容相同且時間相近的訂單沒有裝置資訊（舊版紀錄沒有存），無法判斷是不是同一台送的。這類也可能單純是兩位客人買了一樣的東西。</div>`:''}
+      ${body}</div>`;
+  }
+  return html;
+}
+
 /* ---------- income detail: full-screen overlay, pie + bar ---------- */
 function openIncomeDetail(st){
+  trendView=null;                               /* 每次打開都從完整時間範圍開始 */
   const rev={};
   st.orders.forEach(o=>{
     if(o.free) return;
@@ -1820,6 +1931,7 @@ function openIncomeDetail(st){
         <div class="panel__title">銷量累計趨勢（勾選要顯示的線）</div>
         <div id="trendBox"></div>
       </div>
+      ${dupPanelHtml(st)}
       <div class="panel">
         <div class="panel__title">各品項銷量（含不同規格；套組售出併入商品）</div>
         ${units.length?barSVG(units):`<div class="empty" style="padding:20px">尚無銷售</div>`}
@@ -1835,6 +1947,15 @@ function openIncomeDetail(st){
       drawTrend();
     });
   };
+  let trRaf=0;
+  const redrawTrend=()=>{                       /* 縮放拖曳時節流，一格只重畫一次 */
+    if(trRaf) return;
+    trRaf=setTimeout(()=>{ trRaf=0; drawTrend(); },16);   /* 用 timer 不用 rAF：背景分頁 rAF 會停 */
+  };
+  trendBox.addEventListener('click',e=>{
+    if(e.target.closest('[data-trreset]')){ trendView=null; drawTrend(); }
+  });
+  initTrendGestures(trendBox,st,redrawTrend);
   drawTrend();
   let closed=false;
   const close=()=>{
@@ -1989,9 +2110,24 @@ function salesTrend(st){
   return {times,series,total:tot,grand:total};
 }
 let trendSel=null;                       /* 勾了哪幾條線；預設只看總銷量 */
+let trendView=null;                      /* 看得到的時間範圍 {t0,t1}；null = 全部 */
+let _trendCache=null;
+function salesTrendCached(st){
+  const os=st.orders||[];
+  const key=st.id+'|'+os.length+'|'+(os.length?os[os.length-1].time:0);
+  if(!_trendCache||_trendCache.key!==key) _trendCache={key,d:salesTrend(st)};
+  return _trendCache.d;
+}
+/* 依縮放後的時間長度決定刻度要細到哪 */
+function trendTimeFmt(span){
+  const p2=n=>String(n).padStart(2,'0');
+  if(span>=2*86400000) return t=>{ const d=new Date(t); return p2(d.getMonth()+1)+'/'+p2(d.getDate()); };
+  if(span>=2*3600000)  return t=>{ const d=new Date(t); return p2(d.getHours())+':'+p2(d.getMinutes()); };
+  return t=>{ const d=new Date(t); return p2(d.getHours())+':'+p2(d.getMinutes())+':'+p2(d.getSeconds()); };
+}
 function trendSVG(st){
-  const d=salesTrend(st);
-  if(!d.times.length) return `<div class="empty" style="padding:20px">尚無銷售紀錄</div>`;
+  const d=salesTrendCached(st);
+  if(!d.times.length){ trendView=null; return `<div class="empty" style="padding:20px">尚無銷售紀錄</div>`; }
   if(!trendSel) trendSel={TOTAL:1};
   const colorOf={TOTAL:'var(--ink)'};   /* 調色盤第一色可能等於主題色，總銷量另外用 */
   d.series.forEach((s,i)=>{ colorOf[s.key]=CHART_PAL[i%CHART_PAL.length]; });
@@ -2001,8 +2137,13 @@ function trendSVG(st){
 
   const W=440,H=250,padL=34,padR=14,padT=14,padB=36;
   const plotW=W-padL-padR, plotH=H-padT-padB;
-  const t0=d.times[0], t1=d.times[d.times.length-1], span=t1-t0;
-  const x=t=>span>0?padL+(t-t0)/span*plotW:padL+plotW/2;
+  const f0=d.times[0], f1=d.times[d.times.length-1];
+  const zoomed=!!trendView;
+  let v0=zoomed?trendView.t0:f0, v1=zoomed?trendView.t1:f1;
+  if(v1-v0<=0){ v0-=30000; v1+=30000; }                 /* 只有一筆訂單時給一點寬度 */
+  const x=t=>padL+(t-v0)/(v1-v0)*plotW;
+
+  /* Y 軸固定用全部資料的最大值 —— 縮放只改時間尺度，線的高度不會跟著跳 */
   const peak=picked.length?Math.max.apply(null,picked.map(r=>r.last)):0;
   const max=niceMax(peak);
   const y=v=>padT+plotH-(v/max)*plotH;
@@ -2011,26 +2152,25 @@ function trendSVG(st){
     `<line class="ck-grid" x1="${padL}" y1="${y(t).toFixed(1)}" x2="${W-padR}" y2="${y(t).toFixed(1)}"/>`+
     `<text class="ck-axis" x="${padL-6}" y="${(y(t)+3.5).toFixed(1)}" text-anchor="end">${Math.round(t)}</text>`).join('');
 
-  const oneDay = span<86400000 && new Date(t0).toDateString()===new Date(t1).toDateString();
-  const pad2=n=>String(n).padStart(2,'0');
-  const fmtX=t=>{ const dt=new Date(t);
-    return oneDay?`${pad2(dt.getHours())}:${pad2(dt.getMinutes())}`
-                 :`${pad2(dt.getMonth()+1)}/${pad2(dt.getDate())}`; };
-  const xs=span>0?[t0,t0+span/2,t1]:[t0];
-  const xlab=xs.map((t,i)=>{
-    const anc=xs.length===1?'middle':(i===0?'start':i===xs.length-1?'end':'middle');
-    return `<text class="ck-axis" x="${x(t).toFixed(1)}" y="${H-padB+17}" text-anchor="${anc}">${fmtX(t)}</text>`;
+  const fmt=trendTimeFmt(v1-v0);
+  const xlab=[0,1,2,3].map(i=>{
+    const t=v0+(v1-v0)*i/3;
+    const anc=i===0?'start':i===3?'end':'middle';
+    return `<text class="ck-axis" x="${x(t).toFixed(1)}" y="${H-padB+17}" text-anchor="${anc}">${fmt(t)}</text>`;
   }).join('');
 
   const lines=picked.map(r=>{
     const c=colorOf[r.key];
-    let pts=`${x(t0).toFixed(1)},${y(0).toFixed(1)}`, prev=0;   /* 從 0 起跳，成交那一刻才往上 */
+    let pts=`${x(f0).toFixed(1)},${y(0).toFixed(1)}`, prev=0;   /* 從 0 起跳，成交那一刻才往上 */
     d.times.forEach((t,i)=>{
       pts+=` ${x(t).toFixed(1)},${y(prev).toFixed(1)} ${x(t).toFixed(1)},${y(r.vals[i]).toFixed(1)}`;
       prev=r.vals[i];
     });
-    pts+=` ${x(t1).toFixed(1)},${y(prev).toFixed(1)}`;
-    const dots=d.times.map((t,i)=>`<circle class="tr-dot" cx="${x(t).toFixed(1)}" cy="${y(r.vals[i]).toFixed(1)}" r="2.6" fill="${c}"/>`).join('');
+    pts+=` ${x(f1).toFixed(1)},${y(prev).toFixed(1)}`;
+    const dots=d.times.map((t,i)=>{
+      const px=x(t); if(px<padL-4||px>W-padR+4) return '';     /* 範圍外的點不用畫 */
+      return `<circle class="tr-dot" cx="${px.toFixed(1)}" cy="${y(r.vals[i]).toFixed(1)}" r="2.6" fill="${c}"/>`;
+    }).join('');
     const sw=r.key==='TOTAL'?3:2.2;
     return `<polyline points="${pts}" fill="none" stroke="${c}" stroke-width="${sw}" stroke-linejoin="round" stroke-linecap="round"/>${dots}`;
   }).join('');
@@ -2041,9 +2181,81 @@ function trendSVG(st){
       <span class="nm">${esc(r.name)}</span><span class="vv">${r.last}</span>
     </label>`).join('');
 
-  return `<div class="trend"><svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="銷量累計折線圖">${grid}${xlab}${lines}</svg></div>
+  const full=trendTimeFmt(f1-f0);
+  const bar=zoomed
+    ? `<div class="tr-zoom">範圍 <b>${fmt(v0)}</b> ~ <b>${fmt(v1)}</b><button data-trreset>顯示全部</button></div>`
+    : `<div class="tr-zoom">範圍 <b>${full(f0)}</b> ~ <b>${full(f1)}</b>　<span style="font-size:11.5px">雙指縮放可放大時間軸</span></div>`;
+
+  return `${bar}<div class="trend"><svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="銷量累計折線圖">
+      <defs><clipPath id="trClip"><rect x="${padL}" y="${padT-4}" width="${plotW}" height="${plotH+8}"/></clipPath></defs>
+      ${grid}${xlab}<g clip-path="url(#trClip)">${lines}</g></svg></div>
     <div class="tr-legs">${legend}</div>
     ${picked.length?'':'<div class="tr-hint">勾選上面任一項，就會畫出它的累計銷量曲線。</div>'}`;
+}
+/* 雙指縮放時間軸、單指左右拖曳平移；桌機用滾輪。
+   手勢掛在不會被重繪換掉的外層容器上，所以重畫圖表不會弄丟監聽器。 */
+function initTrendGestures(box,st,redraw){
+  const W=440,padL=34,padR=14;
+  let pinch=null,pan=null;
+  const bounds=()=>{ const t=salesTrendCached(st).times; return t.length?[t[0],t[t.length-1]]:null; };
+  const cur=()=>{ const b=bounds(); return trendView?[trendView.t0,trendView.t1]:b; };
+  const plot=()=>{
+    const sv=box.querySelector('.trend svg'); if(!sv) return null;
+    const r=sv.getBoundingClientRect(); if(!r.width) return null;
+    return {left:r.left+r.width*padL/W, width:r.width*(W-padL-padR)/W};
+  };
+  const setView=(t0,span)=>{
+    const b=bounds(); if(!b) return;
+    const fullSpan=Math.max(1,b[1]-b[0]);
+    span=Math.min(fullSpan,Math.max(20000,span));        /* 最細放大到 20 秒 */
+    if(t0<b[0]) t0=b[0];
+    if(t0+span>b[1]) t0=b[1]-span;
+    if(t0<b[0]) t0=b[0];
+    trendView=(span>=fullSpan-1)?null:{t0,t1:t0+span};
+    redraw();
+  };
+  const zoomAt=(clientX,span,p)=>{
+    const c=cur(); if(!c) return;
+    const frac=Math.min(1,Math.max(0,(clientX-p.left)/p.width));
+    const anchor=c[0]+(c[1]-c[0])*frac;
+    setView(anchor-span*frac,span);
+  };
+  box.addEventListener('touchstart',e=>{
+    const p=plot(), c=cur(); if(!p||!c) return;
+    if(e.touches.length===2){
+      pan=null;
+      pinch={d:Math.abs(e.touches[0].clientX-e.touches[1].clientX),
+             mid:(e.touches[0].clientX+e.touches[1].clientX)/2,span:c[1]-c[0],p};
+    }else if(e.touches.length===1){
+      pinch=null;
+      pan={x:e.touches[0].clientX,y:e.touches[0].clientY,t0:c[0],span:c[1]-c[0],p,on:false};
+    }
+  },{passive:true});
+  box.addEventListener('touchmove',e=>{
+    if(pinch&&e.touches.length===2){
+      e.preventDefault();
+      const nd=Math.abs(e.touches[0].clientX-e.touches[1].clientX);
+      if(nd<12||pinch.d<12) return;
+      zoomAt(pinch.mid,pinch.span*(pinch.d/nd),pinch.p);
+    }else if(pan&&e.touches.length===1){
+      const dx=e.touches[0].clientX-pan.x, dy=e.touches[0].clientY-pan.y;
+      if(!pan.on){
+        if(Math.abs(dy)>Math.abs(dx)){ pan=null; return; }    /* 直向手勢留給頁面捲動 */
+        if(Math.abs(dx)<8) return;
+        pan.on=true;
+      }
+      e.preventDefault();
+      setView(pan.t0-dx/pan.p.width*pan.span,pan.span);
+    }
+  },{passive:false});
+  const done=()=>{ pinch=null; pan=null; };
+  box.addEventListener('touchend',done);
+  box.addEventListener('touchcancel',done);
+  box.addEventListener('wheel',e=>{
+    const p=plot(), c=cur(); if(!p||!c) return;
+    e.preventDefault();
+    zoomAt(e.clientX,(c[1]-c[0])*(e.deltaY>0?1.25:0.8),p);
+  },{passive:false});
 }
 
 /* ============================================================ EVENTS ============================================================ */
